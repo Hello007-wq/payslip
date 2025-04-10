@@ -1,0 +1,138 @@
+import pandas as pd
+from fpdf import FPDF
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
+import os  # For file path handling
+from dotenv import load_dotenv  # To load environment variables
+
+# --- 1. Configuration (Customize these) ---
+excel_file = 'employees.xlsx'  # Path to your Excel file
+
+# Load environment variables from .env file
+load_dotenv()
+sender_email = os.getenv("EMAIL")  # Email address
+sender_password = os.getenv("EMAIL_PASSWORD")  # Email password (or app-specific password if using Gmail)
+
+# --- 2. Function to Read Excel Data ---
+def read_employee_data(file_path):
+    """Reads the Excel file and returns a pandas DataFrame."""
+    try:
+        df = pd.read_excel(file_path)
+        return df
+    except FileNotFoundError:
+        print(f"Error: File not found at {file_path}")
+        return None
+    except Exception as e:
+        print(f"An error occurred while reading the file: {e}")
+        return None
+
+# --- 3. Function to Calculate Net Salary ---
+def calculate_net_salary(basic_salary, allowances, deductions):
+    """Calculates the net salary."""
+    return basic_salary + allowances - deductions
+
+# --- 4. Function to Generate PDF Payslip ---
+def generate_payslip(name, basic_salary, allowances, deductions, net_salary, output_dir="payslips"):
+    """Generates a PDF payslip for a given employee."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+
+    # --- Define colors (RGB) ---
+    gray = (100, 100, 100)
+    black = (0, 0, 0)
+    light_blue = (200, 220, 230)  # Light blue background for headers
+    dark_blue = (0, 0, 139)  # Dark blue for headings
+    green = (0, 128, 0)  # Green for positive values
+    red = (255, 0, 0)  # Red for negative values
+
+    # --- Header (Optional) ---
+    pdf.set_fill_color(*dark_blue)  # Set background color for header
+    pdf.set_text_color(255, 255, 255)  # Set text color to white
+    pdf.cell(0, 10, 'Payslip', 0, 1, 'C', fill=True)  # Centered heading with background color
+
+    # --- Employee Details Section ---
+    pdf.set_fill_color(*light_blue)  # Set background color for section
+    pdf.set_text_color(*black)
+    pdf.cell(0, 5, '--------------------------------------------------', 0, 1, fill=True)
+    pdf.cell(0, 10, f'Name: {name}', 0, 1, fill=True)
+
+    # --- Salary Details Section ---
+    pdf.cell(0, 5, '--------------------------------------------------', 0, 1, fill=True)
+    pdf.set_text_color(*green)
+    pdf.cell(0, 10, f'Basic Salary: ${basic_salary:.2f}', 0, 1, fill=True)
+    pdf.cell(0, 10, f'Allowances: ${allowances:.2f}', 0, 1, fill=True)
+    pdf.set_text_color(*red)
+    pdf.cell(0, 10, f'Deductions: ${deductions:.2f}', 0, 1, fill=True)
+    pdf.set_text_color(*black)
+    pdf.cell(0, 5, '--------------------------------------------------', 0, 1, fill=True)
+    pdf.set_text_color(*dark_blue)
+    pdf.cell(0, 10, f'Net Salary: ${net_salary:.2f}', 0, 1, fill=True)
+
+    # --- Save the PDF (create the directory if it doesn't exist) ---
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    payslip_filename = os.path.join(output_dir, f'payslip_{name}.pdf')  # Use name instead of employee_id
+    pdf.output(payslip_filename)
+    return payslip_filename
+
+# --- 5. Function to Send Email ---
+def send_email(sender_email, sender_password, recipient_email, subject, body, attachment_path=None):
+    """Sends an email with or without an attachment."""
+    if sender_email is None or sender_password is None:
+        print("Error: Sender email or password is not set.")
+        return
+
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = recipient_email
+    msg['Subject'] = subject
+
+    msg.attach(MIMEText(body, 'plain'))
+
+    if attachment_path:
+        with open(attachment_path, "rb") as file:
+            part = MIMEApplication(
+                file.read(),
+                Name=os.path.basename(attachment_path)  # Set the filename for the attachment
+            )
+        part['Content-Disposition'] = f'attachment; filename="{os.path.basename(attachment_path)}"'  # Ensure correct filename in attachment
+        msg.attach(part)
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)  # or your email provider's SMTP server and port
+        server.starttls()  # Use TLS encryption
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, recipient_email, msg.as_string())
+        server.quit()
+        print(f"Email sent to {recipient_email}")
+    except Exception as e:
+        print(f"Error sending email to {recipient_email}: {e}")
+
+# --- 6. Main Script ---
+def main():
+    df = read_employee_data(excel_file)
+
+    if df is None:
+        return  # Exit if there was an error reading the Excel file
+
+    for index, row in df.iterrows():
+        name = row['Name']
+        email = row['Email']
+        basic_salary = row['Basic Salary']
+        allowances = row['Allowances']
+        deductions = row['Deductions']
+
+        net_salary = calculate_net_salary(basic_salary, allowances, deductions)
+        payslip_path = generate_payslip(name, basic_salary, allowances, deductions, net_salary)
+
+        # --- Email Settings ---
+        subject = "Your Monthly Payslip"
+        body = f"Dear {name},\n\nPlease find your monthly payslip attached.\n\nSincerely,\nThe Payslip Team"
+
+        send_email(sender_email, sender_password, email, subject, body, payslip_path)
+
+if __name__ == "__main__":
+    main()
